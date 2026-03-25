@@ -15,8 +15,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class JwtUtil {
 
-    @Value("${jwt.secret}")
-    private String secret;
+    private static final String SHARED_JWT_SECRET = "ai_hiring_local_shared_secret_key_for_dev_2026_min_32";
 
     @Value("${jwt.expiration-ms}")
     private long expirationMs;
@@ -70,7 +69,7 @@ public class JwtUtil {
     }
 
     private SecretKey getSignInKey() {
-        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
+        byte[] keyBytes = SHARED_JWT_SECRET.getBytes(StandardCharsets.UTF_8);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 }

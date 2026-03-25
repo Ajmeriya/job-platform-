@@ -10,7 +10,7 @@
     </parent>
 
     <groupId>com.job-platfrom</groupId>
-    <artifactId>demo</artifactId>
+    <artifactId>auth-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 
     <properties>
