@@ -15,5 +15,6 @@
     <modules>
         <module>auth-service</module>
         <module>job-service</module>
+        <module>application-service</module>
     </modules>
 </project>
