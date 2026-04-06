@@ -10,6 +10,8 @@ import lombok.Setter;
 public class JobResponse {
 
     private Long id;
+    private String role;
+    private String companyName;
     private String title;
     private String description;
     private List<String> skillsRequired;

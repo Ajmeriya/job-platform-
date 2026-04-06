@@ -22,6 +22,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -68,6 +69,16 @@ public class ApplicationController {
         }
     }
 
+    @GetMapping("/me/stats")
+    public ResponseEntity<?> getMyApplicationStats(Authentication authentication) {
+        try {
+            String email = extractEmail(authentication);
+            return ResponseEntity.ok(applicationService.getMyApplicationStats(email));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(ex.getMessage());
+        }
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<?> getById(@PathVariable Long id) {
         try {
@@ -94,6 +105,15 @@ public class ApplicationController {
         }
     }
 
+    @GetMapping("/summary")
+    public ResponseEntity<?> getApplicationSummary(@RequestParam(required = false) Long jobId) {
+        try {
+            return ResponseEntity.ok(applicationService.getApplicationSummary(jobId));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(ex.getMessage());
+        }
+    }
+
     @PostMapping("/{id}/resume-review")
     public ResponseEntity<?> updateResumeReview(@PathVariable Long id, @RequestBody ResumeReviewUpdateRequest request) {
         try {
@@ -110,6 +130,19 @@ public class ApplicationController {
     public ResponseEntity<?> updateRound(@PathVariable Long id, @RequestBody ApplicationRoundUpdateRequest request) {
         try {
             return ResponseEntity.ok(applicationService.updateRound(id, request));
+        } catch (IllegalArgumentException ex) {
+            if (ex.getMessage() != null && ex.getMessage().startsWith("Application not found")) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
+            }
+            return ResponseEntity.badRequest().body(ex.getMessage());
+        }
+    }
+
+    @PatchMapping("/{id}/withdraw")
+    public ResponseEntity<?> withdrawApplication(@PathVariable Long id, Authentication authentication) {
+        try {
+            String email = extractEmail(authentication);
+            return ResponseEntity.ok(applicationService.withdrawApplication(email, id));
         } catch (IllegalArgumentException ex) {
             if (ex.getMessage() != null && ex.getMessage().startsWith("Application not found")) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());

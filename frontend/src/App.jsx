@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 
 const TOKEN_KEY = "jwt";
+const MAX_RESUME_SIZE_BYTES = 10 * 1024 * 1024;
 
 async function callApi(url, options = {}) {
   const token = options.token || localStorage.getItem(TOKEN_KEY) || "";
@@ -67,6 +68,22 @@ function normalizeRole(rawRole) {
   }
   const role = String(rawRole).toUpperCase();
   return role.startsWith("ROLE_") ? role.slice(5) : role;
+}
+
+function formatRoundTypeLabel(roundType) {
+  if (roundType === "TECHNICAL") {
+    return "DSA + SQL";
+  }
+
+  if (roundType === "APTITUDE") {
+    return "Aptitude";
+  }
+
+  if (roundType === "INTERVIEW") {
+    return "Interview";
+  }
+
+  return roundType || "-";
 }
 
 function getFriendlyError(err) {
@@ -300,7 +317,8 @@ function DashboardPage() {
   const [jobs, setJobs] = useState([]);
   const [editingJob, setEditingJob] = useState(null);
   const [editData, setEditData] = useState({
-    title: "",
+    role: "",
+    companyName: "",
     description: "",
     skillsRequired: "",
     location: "",
@@ -329,10 +347,8 @@ function DashboardPage() {
     setLoading(true);
     setError("");
     try {
-      const data = await callApi("/api/jobs", { token });
-      const allJobs = Array.isArray(data) ? data : [];
-      const ownJobs = claims?.userId ? allJobs.filter((j) => Number(j.createdBy) === Number(claims.userId)) : [];
-      setJobs(ownJobs);
+      const data = await callApi("/api/jobs/mine", { token });
+      setJobs(Array.isArray(data) ? data : []);
     } catch (err) {
         if (handleAuthFailure(err, navigate)) {
           return;
@@ -346,7 +362,8 @@ function DashboardPage() {
   const openEdit = (job) => {
     setEditingJob(job);
     setEditData({
-      title: job.title || "",
+      role: job.role || job.title || "",
+      companyName: job.companyName || "",
       description: job.description || "",
       skillsRequired: Array.isArray(job.skillsRequired) ? job.skillsRequired.join(", ") : "",
       location: job.location || "",
@@ -369,14 +386,15 @@ function DashboardPage() {
     setError("");
     try {
       const payload = {
-        title: editData.title,
+        role: editData.role,
+        companyName: editData.companyName,
         description: editData.description,
         skillsRequired: editData.skillsRequired.split(",").map((s) => s.trim()).filter(Boolean),
         location: editData.location,
         experienceRequired: Number(editData.experienceRequired)
       };
 
-      const updated = await callApi(`/api/jobs/${editingJob.id}?createdBy=${encodeURIComponent(claims.userId)}`, {
+      const updated = await callApi(`/api/jobs/${editingJob.id}`, {
         method: "PUT",
         token,
         body: JSON.stringify(payload)
@@ -403,7 +421,7 @@ function DashboardPage() {
     setBusyId(jobId);
     setError("");
     try {
-      await callApi(`/api/jobs/${jobId}?createdBy=${encodeURIComponent(claims.userId)}`, {
+      await callApi(`/api/jobs/${jobId}`, {
         method: "DELETE",
         token
       });
@@ -427,7 +445,7 @@ function DashboardPage() {
     setError("");
 
     try {
-      const updated = await callApi(`/api/jobs/${jobId}/status?createdBy=${encodeURIComponent(claims.userId)}`, {
+      const updated = await callApi(`/api/jobs/${jobId}/status`, {
         method: "PATCH",
         token,
         body: JSON.stringify({ status: nextStatus })
@@ -487,13 +505,17 @@ function DashboardPage() {
         {jobs.map((job) => (
           <article key={job.id} className="job-card">
             <div className="job-top">
-              <h3>{job.title}</h3>
+              <div className="job-identity">
+                <p className="company-highlight">{job.companyName || "Company not specified"}</p>
+                <h3 className="role-title">{job.role || job.title}</h3>
+              </div>
               <span className={`chip status-${String(job.status || "DRAFT").toLowerCase()}`}>{job.status}</span>
             </div>
 
             <p className="job-description">{job.description}</p>
 
             <div className="job-meta-grid">
+              <div className="meta"><strong>Company:</strong> {job.companyName || "-"}</div>
               <div className="meta"><strong>Location:</strong> {job.location}</div>
               <div className="meta"><strong>Experience:</strong> {job.experienceRequired} yrs</div>
               <div className="meta meta-full"><strong>Skills:</strong> {(job.skillsRequired || []).join(", ") || "-"}</div>
@@ -532,7 +554,8 @@ function DashboardPage() {
           </header>
 
           <form className="form" onSubmit={saveEdit}>
-            <label>Title<input required value={editData.title} onChange={(e) => setEditData({ ...editData, title: e.target.value })} /></label>
+            <label>Role<input required value={editData.role} onChange={(e) => setEditData({ ...editData, role: e.target.value })} /></label>
+            <label>Company Name<input required value={editData.companyName} onChange={(e) => setEditData({ ...editData, companyName: e.target.value })} /></label>
             <label>Description<textarea rows="4" required value={editData.description} onChange={(e) => setEditData({ ...editData, description: e.target.value })} /></label>
             <label>Skills Required (comma separated)<input value={editData.skillsRequired} onChange={(e) => setEditData({ ...editData, skillsRequired: e.target.value })} /></label>
             <label>Location<input required value={editData.location} onChange={(e) => setEditData({ ...editData, location: e.target.value })} /></label>
@@ -579,6 +602,13 @@ function formatDateTime(value) {
 }
 
 async function uploadResumeFile(file, token) {
+  if (!file) {
+    throw new Error("Please select a resume file.");
+  }
+  if (file.size > MAX_RESUME_SIZE_BYTES) {
+    throw new Error("Resume is too large. Maximum allowed size is 10MB.");
+  }
+
   const formData = new FormData();
   formData.append("file", file);
 
@@ -602,6 +632,9 @@ async function uploadResumeFile(file, token) {
     const message = typeof body === "string" ? body : body?.message || JSON.stringify(body);
     const error = new Error(message || "Resume upload failed");
     error.status = res.status;
+    if (res.status === 413) {
+      error.message = "Resume is too large. Maximum allowed size is 10MB.";
+    }
     throw error;
   }
 
@@ -618,10 +651,8 @@ function CandidateJobsPage() {
     setLoading(true);
     setError("");
     try {
-      const data = await callApi("/api/jobs", { token });
-      const all = Array.isArray(data) ? data : [];
-      const visible = all.filter((job) => String(job.status || "").toUpperCase() === "ACTIVE");
-      setJobs(visible);
+      const data = await callApi("/api/jobs/active", { token });
+      setJobs(Array.isArray(data) ? data : []);
     } catch (err) {
       if (handleAuthFailure(err, navigate)) {
         return;
@@ -654,10 +685,14 @@ function CandidateJobsPage() {
         {jobs.map((job) => (
           <article key={job.id} className="job-card compact-job">
             <div className="job-top">
-              <h3>{job.title}</h3>
+              <div className="job-identity">
+                <p className="company-highlight">{job.companyName || "Company not specified"}</p>
+                <h3 className="role-title">{job.role || job.title}</h3>
+              </div>
               <span className="chip status-active">ACTIVE</span>
             </div>
             <p className="job-description">{job.description?.slice(0, 130)}{job.description && job.description.length > 130 ? "..." : ""}</p>
+            <div className="meta"><strong>Company:</strong> {job.companyName || "-"}</div>
             <div className="meta"><strong>Location:</strong> {job.location}</div>
             <div className="meta"><strong>Experience:</strong> {job.experienceRequired} years</div>
             <button className="btn ghost" type="button" onClick={() => navigate(`/candidate/jobs/${job.id}`)}>View Details</button>
@@ -677,17 +712,29 @@ function CandidateJobsPage() {
 
 function CandidateApplicationsPage() {
   const navigate = useNavigate();
-  const { token, claims, isRecruiter } = useRecruiterSession();
+  const { token, isRecruiter } = useRecruiterSession();
   const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
   const [items, setItems] = useState([]);
+  const [stats, setStats] = useState({ total: 0, applied: 0, inProgress: 0, selected: 0, rejected: 0 });
 
   const loadApplications = async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await callApi("/applications/me", { token });
+      const [data, statsData] = await Promise.all([
+        callApi("/applications/me", { token }),
+        callApi("/applications/me/stats", { token })
+      ]);
       setItems(Array.isArray(data) ? data : []);
+      setStats({
+        total: Number(statsData?.total || 0),
+        applied: Number(statsData?.applied || 0),
+        inProgress: Number(statsData?.inProgress || 0),
+        selected: Number(statsData?.selected || 0),
+        rejected: Number(statsData?.rejected || 0)
+      });
     } catch (err) {
       if (handleAuthFailure(err, navigate)) {
         return;
@@ -695,6 +742,31 @@ function CandidateApplicationsPage() {
       setError(getFriendlyError(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const withdrawApplication = async (id) => {
+    const ok = window.confirm("Withdraw this application?");
+    if (!ok) {
+      return;
+    }
+
+    setBusyId(id);
+    setError("");
+    try {
+      const updated = await callApi(`/applications/${id}/withdraw`, {
+        method: "PATCH",
+        token
+      });
+      setItems((prev) => prev.map((app) => (app.id === id ? updated : app)));
+      setStats((prev) => ({ ...prev, inProgress: Math.max(0, prev.inProgress - 1), rejected: prev.rejected + 1 }));
+    } catch (err) {
+      if (handleAuthFailure(err, navigate)) {
+        return;
+      }
+      setError(getFriendlyError(err));
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -714,6 +786,14 @@ function CandidateApplicationsPage() {
     <main className="page candidate-page">
       <CandidateNav active="applications" />
 
+      <section className="stats-row reveal" style={{ "--delay": "0.05s" }}>
+        <span className="mini-chip">Total: {stats.total}</span>
+        <span className="mini-chip">Applied: {stats.applied}</span>
+        <span className="mini-chip">In Progress: {stats.inProgress}</span>
+        <span className="mini-chip">Selected: {stats.selected}</span>
+        <span className="mini-chip">Rejected: {stats.rejected}</span>
+      </section>
+
       {error && <p className="error reveal" style={{ "--delay": "0.07s" }}>{error}</p>}
 
       <section className="jobs-grid reveal" style={{ "--delay": "0.1s" }}>
@@ -726,8 +806,20 @@ function CandidateApplicationsPage() {
             <div className="meta"><strong>Job ID:</strong> {app.jobId}</div>
             <div className="meta"><strong>Resume:</strong> <a href={app.resumeUrl} target="_blank" rel="noreferrer">Open</a></div>
             <div className="meta"><strong>Resume Review:</strong> {app.resumeStatus} ({app.resumeScore ?? "-"})</div>
-            <div className="meta"><strong>Current Round:</strong> {app.currentRound || "-"}</div>
+            <div className="meta"><strong>Current Round:</strong> {formatRoundTypeLabel(app.currentRound)}</div>
             <div className="meta"><strong>Updated:</strong> {formatDateTime(app.updatedAt)}</div>
+            {(app.status === "APPLIED" || app.status === "IN_PROGRESS") && (
+              <div className="row-actions">
+                <button
+                  className="btn danger"
+                  type="button"
+                  disabled={busyId === app.id}
+                  onClick={() => withdrawApplication(app.id)}
+                >
+                  {busyId === app.id ? "Withdrawing..." : "Withdraw"}
+                </button>
+              </div>
+            )}
           </article>
         ))}
 
@@ -789,6 +881,8 @@ function RecruiterApplicationsPage() {
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
   const [apps, setApps] = useState([]);
+  const [summary, setSummary] = useState({ total: 0, applied: 0, inProgress: 0, selected: 0, rejected: 0 });
+  const [statusFilter, setStatusFilter] = useState("ALL");
   const [roundFormById, setRoundFormById] = useState({});
 
   const loadApplications = async (targetJobId = jobIdFilter) => {
@@ -796,9 +890,22 @@ function RecruiterApplicationsPage() {
     setError("");
     try {
       const path = targetJobId ? `/applications/jobs/${encodeURIComponent(targetJobId)}` : "/applications";
-      const data = await callApi(path, { token });
+      const summaryPath = targetJobId
+        ? `/applications/summary?jobId=${encodeURIComponent(targetJobId)}`
+        : "/applications/summary";
+      const [data, summaryData] = await Promise.all([
+        callApi(path, { token }),
+        callApi(summaryPath, { token })
+      ]);
       const list = Array.isArray(data) ? data : [];
       setApps(list);
+      setSummary({
+        total: Number(summaryData?.total || 0),
+        applied: Number(summaryData?.applied || 0),
+        inProgress: Number(summaryData?.inProgress || 0),
+        selected: Number(summaryData?.selected || 0),
+        rejected: Number(summaryData?.rejected || 0)
+      });
 
       const defaults = {};
       list.forEach((app) => {
@@ -890,9 +997,23 @@ function RecruiterApplicationsPage() {
           <p className="tag">RECURATOR OPS</p>
           <h1>Application Pipeline</h1>
           <p className="subtext">Review resumes and move candidates round-by-round.</p>
+          <div className="stats-row">
+            <span className="mini-chip">Total: {summary.total}</span>
+            <span className="mini-chip">Applied: {summary.applied}</span>
+            <span className="mini-chip">In Progress: {summary.inProgress}</span>
+            <span className="mini-chip">Selected: {summary.selected}</span>
+            <span className="mini-chip">Rejected: {summary.rejected}</span>
+          </div>
         </div>
         <div className="head-actions">
           <input className="filter-input" placeholder="Filter by Job ID" value={jobIdFilter} onChange={(e) => setJobIdFilter(e.target.value)} />
+          <select className="filter-input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="ALL">All Status</option>
+            <option value="APPLIED">Applied</option>
+            <option value="IN_PROGRESS">In Progress</option>
+            <option value="SELECTED">Selected</option>
+            <option value="REJECTED">Rejected</option>
+          </select>
           <button className="btn ghost" type="button" onClick={() => loadApplications(jobIdFilter)} disabled={loading}>{loading ? "Loading..." : "Apply Filter"}</button>
           <button className="btn primary" type="button" onClick={() => { setJobIdFilter(""); loadApplications(""); }} disabled={loading}>All</button>
         </div>
@@ -901,7 +1022,7 @@ function RecruiterApplicationsPage() {
       {error && <p className="error reveal" style={{ "--delay": "0.07s" }}>{error}</p>}
 
       <section className="jobs-grid reveal" style={{ "--delay": "0.1s" }}>
-        {apps.map((app) => {
+        {apps.filter((app) => statusFilter === "ALL" || String(app.status || "").toUpperCase() === statusFilter).map((app) => {
           const form = roundFormById[app.id] || { roundType: app.currentRound || "APTITUDE", status: "PENDING", score: "", feedback: "" };
           return (
             <article key={app.id} className="job-card app-card">
@@ -911,7 +1032,7 @@ function RecruiterApplicationsPage() {
               </div>
               <div className="meta"><strong>Application ID:</strong> {app.id}</div>
               <div className="meta"><strong>Job ID:</strong> {app.jobId}</div>
-              <div className="meta"><strong>Current Round:</strong> {app.currentRound || "-"}</div>
+              <div className="meta"><strong>Current Round:</strong> {formatRoundTypeLabel(app.currentRound)}</div>
               <div className="meta"><strong>Resume:</strong> <a href={app.resumeUrl} target="_blank" rel="noreferrer">Open Resume</a></div>
               <div className="meta"><strong>Resume Status:</strong> {app.resumeStatus} ({app.resumeScore ?? "-"})</div>
 
@@ -924,7 +1045,7 @@ function RecruiterApplicationsPage() {
               <div className="round-mini-form">
                 <select value={form.roundType} onChange={(e) => setRoundFormById((prev) => ({ ...prev, [app.id]: { ...form, roundType: e.target.value } }))}>
                   <option value="APTITUDE">APTITUDE</option>
-                  <option value="TECHNICAL">TECHNICAL</option>
+                  <option value="TECHNICAL">DSA + SQL</option>
                   <option value="INTERVIEW">INTERVIEW</option>
                 </select>
                 <select value={form.status} onChange={(e) => setRoundFormById((prev) => ({ ...prev, [app.id]: { ...form, status: e.target.value } }))}>
@@ -957,7 +1078,8 @@ function CreateJobPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [formData, setFormData] = useState({
-    title: "",
+    role: "",
+    companyName: "",
     description: "",
     skillsRequired: "",
     location: "",
@@ -977,14 +1099,15 @@ function CreateJobPage() {
 
     try {
       const payload = {
-        title: formData.title,
+        role: formData.role,
+        companyName: formData.companyName,
         description: formData.description,
         skillsRequired: formData.skillsRequired.split(",").map((s) => s.trim()).filter(Boolean),
         location: formData.location,
         experienceRequired: Number(formData.experienceRequired)
       };
 
-      const created = await callApi(`/api/jobs?createdBy=${encodeURIComponent(claims.userId)}`, {
+      const created = await callApi(`/api/jobs`, {
         method: "POST",
         body: JSON.stringify(payload),
         token
@@ -1014,7 +1137,8 @@ function CreateJobPage() {
 
       <section className="step-card reveal" style={{ "--delay": "0.07s" }}>
         <form className="form" onSubmit={submit}>
-          <label>Title<input required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} /></label>
+          <label>Role<input required value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} /></label>
+          <label>Company Name<input required value={formData.companyName} onChange={(e) => setFormData({ ...formData, companyName: e.target.value })} /></label>
           <label>Description<textarea rows="4" required value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} /></label>
           <label>Skills Required (comma separated)<input value={formData.skillsRequired} onChange={(e) => setFormData({ ...formData, skillsRequired: e.target.value })} /></label>
           <label>Location<input required value={formData.location} onChange={(e) => setFormData({ ...formData, location: e.target.value })} /></label>
@@ -1031,7 +1155,7 @@ const ROUND_ORDER = ["APTITUDE", "TECHNICAL", "INTERVIEW"];
 
 const ROUND_TYPE_CONFIG = {
   APTITUDE: { defaultTime: 30, hint: "Set aptitude questions and topics.", title: "Round 1: Aptitude" },
-  TECHNICAL: { defaultTime: 45, hint: "Set DSA/SQL questions and technical topics.", title: "Round 2: Technical" },
+  TECHNICAL: { defaultTime: 45, hint: "Set DSA and SQL questions for the screening round.", title: "Round 2: DSA + SQL" },
   INTERVIEW: { defaultTime: 60, hint: "Set interview skills to evaluate.", title: "Round 3: Interview" }
 };
 
@@ -1116,11 +1240,6 @@ function ConfigureRoundsPage() {
     setError("");
     try {
       const loaded = await callApi(`/api/jobs/${jobId}`, { token });
-      if (claims?.userId && Number(loaded.createdBy) !== Number(claims.userId)) {
-        setError("This job is not created by your account.");
-        setJob(null);
-        return;
-      }
       setJob(loaded);
 
       const existingRounds = await callApi(`/api/jobs/${jobId}/rounds`, { token });
@@ -1239,7 +1358,8 @@ function ConfigureRoundsPage() {
         <div>
           <p className="tag">STEP 2</p>
           <h1>Configure Rounds</h1>
-          {job && <p className="subtext">{job.title} (ID: {job.id})</p>}
+          {job && <p className="subtext">{job.role || job.title} (ID: {job.id})</p>}
+          {job && <p className="company-highlight">{job.companyName || "Company not specified"}</p>}
         </div>
         <button className="btn ghost" type="button" onClick={() => navigate("/recurator/dashboard")}>Back to Jobs</button>
       </header>
@@ -1250,9 +1370,11 @@ function ConfigureRoundsPage() {
             <div key={type} className={`wizard-step ${index < stepIndex ? "done" : ""} ${index === stepIndex ? "active" : ""}`}>
               <span>{index + 1}</span>
               <p>{type}</p>
+                <p>{formatRoundTypeLabel(type)}</p>
             </div>
           ))}
         </div>
+                  <option value="TECHNICAL">DSA + SQL</option>
 
         {error && <p className="error">{error}</p>}
         {ok && <p className="ok">{ok}</p>}
@@ -1375,20 +1497,10 @@ function CandidateJobDetailsPage() {
       const byId = await callApi(`/api/jobs/${jobId}`, { token });
       setJob(byId || null);
     } catch (err) {
-      // Fallback for environments where the single-job endpoint is unavailable.
-      try {
-        const list = await callApi("/api/jobs", { token });
-        const found = (Array.isArray(list) ? list : []).find((item) => String(item.id) === String(jobId));
-        setJob(found || null);
-        if (!found) {
-          setError("Job not found.");
-        }
-      } catch (fallbackErr) {
-        if (handleAuthFailure(fallbackErr, navigate)) {
-          return;
-        }
-        setError(getFriendlyError(fallbackErr));
+      if (handleAuthFailure(err, navigate)) {
+        return;
       }
+      setError(getFriendlyError(err));
     } finally {
       setLoading(false);
     }
@@ -1412,6 +1524,10 @@ function CandidateJobDetailsPage() {
     }
     if (!resumeFile) {
       setError("Please upload a resume file before applying.");
+      return;
+    }
+    if (resumeFile.size > MAX_RESUME_SIZE_BYTES) {
+      setError("Resume is too large. Maximum allowed size is 10MB.");
       return;
     }
 
@@ -1448,7 +1564,7 @@ function CandidateJobDetailsPage() {
       <section className="dash-head reveal" style={{ "--delay": "0.05s" }}>
         <div>
           <p className="tag">JOB DETAILS</p>
-          <h1>{job?.title || "Job"}</h1>
+          <h1>{job?.role || job?.title || "Job"}</h1>
           <p className="subtext">Review details and apply with your latest resume.</p>
         </div>
         <button className="btn ghost" type="button" onClick={() => navigate("/candidate/jobs")}>Back to Jobs</button>
@@ -1461,12 +1577,16 @@ function CandidateJobDetailsPage() {
       {!loading && job && (
         <section className="step-card reveal" style={{ "--delay": "0.1s" }}>
           <div className="job-top">
-            <h3>{job.title}</h3>
+            <div className="job-identity">
+              <p className="company-highlight">{job.companyName || "Company not specified"}</p>
+              <h3 className="role-title">{job.role || job.title}</h3>
+            </div>
             <span className="chip status-active">{String(job.status || "ACTIVE").toUpperCase()}</span>
           </div>
 
           <p className="job-description">{job.description || "No description provided."}</p>
           <ul className="job-detail-list">
+            <li><strong>Company:</strong> {job.companyName || "Not specified"}</li>
             <li><strong>Location:</strong> {job.location || "Not specified"}</li>
             <li><strong>Experience Required:</strong> {job.experienceRequired ?? "-"} years</li>
             <li><strong>Skills:</strong> {(job.skillsRequired || []).join(", ") || "Not specified"}</li>

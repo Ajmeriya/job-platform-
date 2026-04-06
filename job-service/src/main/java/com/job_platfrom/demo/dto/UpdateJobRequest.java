@@ -8,7 +8,8 @@ import lombok.Setter;
 @Getter
 @Setter
 public class UpdateJobRequest {
-    private String title;
+    private String role;
+    private String companyName;
     private String description;
     private List<String> skillsRequired;
     private String location;

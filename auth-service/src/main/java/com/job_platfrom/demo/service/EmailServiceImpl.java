@@ -51,8 +51,6 @@ public class EmailServiceImpl implements EmailService {
             log.error("Verification email send failed for {}", toEmail, ex);
             throw new org.springframework.mail.MailSendException("Unable to send verification email", ex);
         }
-
-        // Fallback output so user can proceed even if inbox delivery is delayed.
-        System.out.println("Verification code for " + toEmail + ": " + code);
+        // System.out.println("Verification code for " + toEmail + ": " + code);
     }
 }

@@ -26,7 +26,8 @@ public class JobServiceImpl implements JobService {
 		validateCreateJobRequest(request, createdBy);
 
 		Job job = Job.builder()
-			.title(request.getTitle().trim())
+			.role(request.getRole().trim())
+			.companyName(request.getCompanyName().trim())
 			.description(request.getDescription().trim())
 			.skillsRequired(request.getSkillsRequired() == null ? new ArrayList<>() : request.getSkillsRequired())
 			.location(request.getLocation().trim())
@@ -67,11 +68,17 @@ public class JobServiceImpl implements JobService {
 			throw new IllegalArgumentException("Not allowed to update this job");
 		}
 
-		if (request.getTitle() != null) {
-			if (request.getTitle().isBlank()) {
-				throw new IllegalArgumentException("title cannot be blank");
+		if (request.getRole() != null) {
+			if (request.getRole().isBlank()) {
+				throw new IllegalArgumentException("role cannot be blank");
 			}
-			existing.setTitle(request.getTitle().trim());
+			existing.setRole(request.getRole().trim());
+		}
+		if (request.getCompanyName() != null) {
+			if (request.getCompanyName().isBlank()) {
+				throw new IllegalArgumentException("companyName cannot be blank");
+			}
+			existing.setCompanyName(request.getCompanyName().trim());
 		}
 		if (request.getDescription() != null) {
 			if (request.getDescription().isBlank()) {
@@ -145,8 +152,11 @@ public class JobServiceImpl implements JobService {
 		if (createdBy == null || createdBy <= 0) {
 			throw new IllegalArgumentException("createdBy must be a positive value");
 		}
-		if (request.getTitle() == null || request.getTitle().isBlank()) {
-			throw new IllegalArgumentException("title is required");
+		if (request.getRole() == null || request.getRole().isBlank()) {
+			throw new IllegalArgumentException("role is required");
+		}
+		if (request.getCompanyName() == null || request.getCompanyName().isBlank()) {
+			throw new IllegalArgumentException("companyName is required");
 		}
 		if (request.getDescription() == null || request.getDescription().isBlank()) {
 			throw new IllegalArgumentException("description is required");

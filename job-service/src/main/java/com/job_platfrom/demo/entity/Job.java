@@ -36,8 +36,11 @@ public class Job {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private String title;
+    @Column(name = "title", nullable = false)
+    private String role;
+
+    @Column(name = "company_name")
+    private String companyName;
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String description;

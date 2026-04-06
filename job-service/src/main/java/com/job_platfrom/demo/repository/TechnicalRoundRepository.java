@@ -4,6 +4,8 @@ import com.job_platfrom.demo.entity.TechnicalRound;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+
+//nothing
 import java.util.List;
 
 @Repository

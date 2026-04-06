@@ -14,6 +14,7 @@ import com.job_platfrom.demo.entity.ApplicationRound;
 import com.job_platfrom.demo.repository.ApplicationRepository;
 import com.job_platfrom.demo.repository.ApplicationRoundRepository;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +25,7 @@ public class ApplicationServiceImpl implements ApplicationService {
 
     private final ApplicationRepository applicationRepository;
     private final ApplicationRoundRepository applicationRoundRepository;
+    private final ResumeAnalysisKafkaService resumeAnalysisKafkaService;
 
     @Override
     @Transactional
@@ -51,6 +53,7 @@ public class ApplicationServiceImpl implements ApplicationService {
             .build();
 
         Application saved = applicationRepository.save(application);
+        resumeAnalysisKafkaService.queueAnalysis(saved);
         return toResponse(saved, List.of());
     }
 
@@ -130,10 +133,7 @@ public class ApplicationServiceImpl implements ApplicationService {
                 application.setCurrentRound(null);
             }
             if (request.getResumeStatus() == ResumeStatus.SHORTLISTED) {
-                application.setStatus(ApplicationStatus.IN_PROGRESS);
-                if (application.getCurrentRound() == null) {
-                    application.setCurrentRound(RoundType.APTITUDE);
-                }
+                startFirstRound(application);
             }
         }
 
@@ -187,6 +187,89 @@ public class ApplicationServiceImpl implements ApplicationService {
         return toResponseWithRounds(application);
     }
 
+    @Override
+    @Transactional
+    public ApplicationResponse withdrawApplication(String candidateEmail, Long applicationId) {
+        if (candidateEmail == null || candidateEmail.isBlank()) {
+            throw new IllegalArgumentException("Candidate email is required");
+        }
+        if (applicationId == null) {
+            throw new IllegalArgumentException("Application id is required");
+        }
+
+        Application application = applicationRepository.findById(applicationId)
+            .orElseThrow(() -> new IllegalArgumentException("Application not found for id: " + applicationId));
+
+        if (!candidateEmail.equalsIgnoreCase(application.getCandidateEmail())) {
+            throw new IllegalArgumentException("Not allowed to modify this application");
+        }
+
+        if (application.getStatus() == ApplicationStatus.SELECTED || application.getStatus() == ApplicationStatus.REJECTED) {
+            throw new IllegalArgumentException("Application cannot be withdrawn in current status: " + application.getStatus());
+        }
+
+        application.setStatus(ApplicationStatus.REJECTED);
+        application.setResumeStatus(ResumeStatus.REJECTED);
+        application.setCurrentRound(null);
+
+        Application saved = applicationRepository.save(application);
+        return toResponseWithRounds(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Long> getMyApplicationStats(String candidateEmail) {
+        if (candidateEmail == null || candidateEmail.isBlank()) {
+            throw new IllegalArgumentException("Candidate email is required");
+        }
+
+        long total = applicationRepository.countByCandidateEmail(candidateEmail);
+        long applied = applicationRepository.countByCandidateEmailAndStatus(candidateEmail, ApplicationStatus.APPLIED);
+        long inProgress = applicationRepository.countByCandidateEmailAndStatus(candidateEmail, ApplicationStatus.IN_PROGRESS);
+        long selected = applicationRepository.countByCandidateEmailAndStatus(candidateEmail, ApplicationStatus.SELECTED);
+        long rejected = applicationRepository.countByCandidateEmailAndStatus(candidateEmail, ApplicationStatus.REJECTED);
+
+        return Map.of(
+            "total", total,
+            "applied", applied,
+            "inProgress", inProgress,
+            "selected", selected,
+            "rejected", rejected
+        );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Long> getApplicationSummary(Long jobId) {
+        long total;
+        long applied;
+        long inProgress;
+        long selected;
+        long rejected;
+
+        if (jobId != null && jobId > 0) {
+            total = applicationRepository.countByJobId(jobId);
+            applied = applicationRepository.countByJobIdAndStatus(jobId, ApplicationStatus.APPLIED);
+            inProgress = applicationRepository.countByJobIdAndStatus(jobId, ApplicationStatus.IN_PROGRESS);
+            selected = applicationRepository.countByJobIdAndStatus(jobId, ApplicationStatus.SELECTED);
+            rejected = applicationRepository.countByJobIdAndStatus(jobId, ApplicationStatus.REJECTED);
+        } else {
+            total = applicationRepository.count();
+            applied = applicationRepository.countByStatus(ApplicationStatus.APPLIED);
+            inProgress = applicationRepository.countByStatus(ApplicationStatus.IN_PROGRESS);
+            selected = applicationRepository.countByStatus(ApplicationStatus.SELECTED);
+            rejected = applicationRepository.countByStatus(ApplicationStatus.REJECTED);
+        }
+
+        return Map.of(
+            "total", total,
+            "applied", applied,
+            "inProgress", inProgress,
+            "selected", selected,
+            "rejected", rejected
+        );
+    }
+
     private void applyStatusTransition(Application application, RoundType roundType, RoundStatus roundStatus) {
         if (roundStatus == RoundStatus.FAILED) {
             application.setStatus(ApplicationStatus.REJECTED);
@@ -202,17 +285,20 @@ public class ApplicationServiceImpl implements ApplicationService {
 
         if (roundStatus == RoundStatus.PASSED) {
             application.setStatus(ApplicationStatus.IN_PROGRESS);
-            if (roundType == RoundType.APTITUDE) {
-                application.setCurrentRound(RoundType.TECHNICAL);
-                return;
+            switch (roundType) {
+                case APTITUDE -> application.setCurrentRound(RoundType.TECHNICAL);
+                case TECHNICAL -> application.setCurrentRound(RoundType.INTERVIEW);
+                case INTERVIEW -> {
+                    application.setStatus(ApplicationStatus.SELECTED);
+                    application.setCurrentRound(null);
+                }
             }
-            if (roundType == RoundType.TECHNICAL) {
-                application.setCurrentRound(RoundType.INTERVIEW);
-                return;
-            }
-            application.setStatus(ApplicationStatus.SELECTED);
-            application.setCurrentRound(null);
         }
+    }
+
+    private void startFirstRound(Application application) {
+        application.setStatus(ApplicationStatus.IN_PROGRESS);
+        application.setCurrentRound(RoundType.APTITUDE);
     }
 
     private ApplicationResponse toResponseWithRounds(Application application) {

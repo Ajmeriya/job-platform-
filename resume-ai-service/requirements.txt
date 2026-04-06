@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+aiokafka
+sentence-transformers
+scikit-learn
+pdfplumber

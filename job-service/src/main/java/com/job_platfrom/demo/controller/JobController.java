@@ -58,6 +58,17 @@ public class JobController {
         }
     }
 
+    @GetMapping("/public/{jobId}")
+    public ResponseEntity<?> getPublicJobById(@PathVariable Long jobId) {
+        try {
+            return jobService.getJobById(jobId)
+                .<ResponseEntity<?>>map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND).body("Job not found for id: " + jobId));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(ex.getMessage());
+        }
+    }
+
     @PutMapping("/{jobId}")
     public ResponseEntity<?> updateJob(
         @PathVariable Long jobId,
@@ -93,6 +104,15 @@ public class JobController {
             }
             return ResponseEntity.badRequest().body(ex.getMessage());
         }
+    }
+
+    @PutMapping("/{jobId}/status")
+    public ResponseEntity<?> updateJobStatusPut(
+        @PathVariable Long jobId,
+        @RequestBody UpdateJobStatusRequest request,
+        @RequestParam Long createdBy
+    ) {
+        return updateJobStatus(jobId, request, createdBy);
     }
 
     @DeleteMapping("/{jobId}")
